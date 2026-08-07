@@ -2,6 +2,16 @@
 
 A zsh plugin with an active Claude account profile for Claude Code and Claude Desktop.
 
+## Scope: per-shell, not global
+
+Profile **data** — the `code`/`desktop` directories under `$CLAUDE_SWITCHER_HOME` — is global: one shared store on disk, visible to every shell and session on the machine. Adding or removing a profile in one terminal is immediately visible in all others.
+
+Which profile is **active** is per-shell. `claude-profile work` changes only the current shell (and any child process or subshell it starts, since the setting is exported to the environment) — other already-open terminals keep whatever profile they had active. This is what lets two terminals run `claude` against different accounts at the same time.
+
+New shells don't inherit from whichever terminal you last touched — they start from one persisted default at `$CLAUDE_SWITCHER_HOME/.active-profile`, updated every time any shell switches profiles. Set `CLAUDE_SWITCHER_DEFAULT_PROFILE` before sourcing the plugin to override the starting profile for one shell without touching that persisted default.
+
+The prompt toggle (`claudeon`/`claudeoff`) follows the same split — see [Prompt](#prompt).
+
 ## Install
 
 ### oh-my-zsh
@@ -102,7 +112,7 @@ The built-in `default` profile uses Claude's native configuration and data direc
 claude-profile default
 ```
 
-The active profile is shell-local, allowing two terminals to use different accounts simultaneously:
+Two terminals can run different accounts at once, since the active profile is per-shell (see [Scope](#scope-per-shell-not-global)):
 
 ```zsh
 # Terminal 1
@@ -115,8 +125,6 @@ claude-profile add work
 claude-profile work
 claude
 ```
-
-The last selection becomes the default for new shells without changing profiles in existing shells.
 
 Named profiles store their files under:
 
