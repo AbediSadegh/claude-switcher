@@ -417,6 +417,7 @@ _claude_switcher_completion() {
   local -a commands
   local -a profiles
   local profile_dir
+  local curcontext="$curcontext" state line
 
   commands=(
     'add:Add a named profile'
@@ -432,23 +433,29 @@ _claude_switcher_completion() {
     [[ "${profile_dir:t}" == default ]] || profiles+=("${profile_dir:t}")
   done
 
-  if (( CURRENT == 2 )); then
-    _describe -t commands command commands
-    _describe -t profiles profile profiles
-    return
-  fi
+  _arguments -C \
+    '1: :->command' \
+    '*:: :->args'
 
-  case "${words[2]}" in
-    add)
-      _message "new profile name"
+  case "$state" in
+    command)
+      _describe -t commands command commands
+      _describe -t profiles profile profiles
       ;;
-    use)
-      _arguments "1:profile:($profiles)"
-      ;;
-    remove)
-      _arguments \
-        '(-f --force)'{-f,--force}'[remove without confirmation]' \
-        "1:profile:($profiles)"
+    args)
+      case "$line[1]" in
+        add)
+          _message "new profile name"
+          ;;
+        use)
+          _arguments "1:profile:($profiles)"
+          ;;
+        remove)
+          _arguments \
+            '(-f --force)'{-f,--force}'[remove without confirmation]' \
+            "1:profile:($profiles)"
+          ;;
+      esac
       ;;
   esac
 }
