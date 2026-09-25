@@ -447,7 +447,7 @@ claude-profile() {
       print -r -- "$CLAUDE_SWITCHER_PROFILE"
       ;;
     -l|--list|list)
-      claude-profiles
+      _claude_switcher_list_profiles
       ;;
     -h|--help|help)
       print -r -- "Usage:
@@ -460,7 +460,7 @@ claude-profile() {
   claude-profile --list
   claude-profile --current
 
-See also: claude-profiles --help, claudeon --help, claudeoff --help"
+See also: claudeon --help, claudeoff --help"
       ;;
     -c|--current|current)
       print -r -- "$CLAUDE_SWITCHER_PROFILE"
@@ -499,25 +499,11 @@ See also: claude-profiles --help, claudeon --help, claudeoff --help"
   esac
 }
 
-claude-profiles() {
+_claude_switcher_list_profiles() {
   emulate -L zsh
   local root=$(_claude_switcher_home)
   local profile_dir
   local profile
-
-  case "${1:-}" in
-    -h|--help)
-      print -r -- "List Claude profiles, marking the active one with '*'.
-
-Usage: claude-profiles"
-      return
-      ;;
-    "") ;;
-    *)
-      print -u2 -- "Unknown option: $1"
-      return 2
-      ;;
-  esac
 
   if [[ "$CLAUDE_SWITCHER_PROFILE" == default ]]; then
     print -r -- "* default"
