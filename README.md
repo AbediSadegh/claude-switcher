@@ -142,6 +142,19 @@ Each named profile requires authentication on first use. Claude Desktop support 
 export CLAUDE_DESKTOP_BIN=/path/to/claude-desktop
 ```
 
+### `claude://` links
+
+Links such as `claude://claude.ai/customize/connectors/...` (sent by the browser after connecting an integration or signing in) are opened by the desktop environment, not by your shell, so the `claude-desktop` function never runs. The default handler therefore delivers them to the `default` profile's Desktop instance. On Linux, install a handler that routes them to the right profile instead:
+
+```zsh
+claude-profile url-handler install
+claude-profile url-handler status
+```
+
+A link goes to the persisted active profile (`$CLAUDE_SWITCHER_HOME/.active-profile`) if its Desktop instance is running. Otherwise it goes to whichever profile's Desktop instance is running, if exactly one is. Otherwise it starts the persisted active profile. Re-run `install` after moving the plugin checkout or the Desktop binary, since both paths are recorded in the generated handler. `claude-profile url-handler uninstall` removes the handler and restores the previous one.
+
+If Firefox still opens the wrong application, reset `claude` under **Settings → General → Applications** to "Always ask" or the system default; Firefox remembers an explicitly chosen application separately from the system default.
+
 ## Prompt
 
 `claude_ps1` renders the active profile as `(✳|personal)`. Toggle it like kube-ps1:
