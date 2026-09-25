@@ -1,3 +1,5 @@
+typeset -g _CLAUDE_SWITCHER_PLUGIN_FILE=${${(%):-%x}:A}
+
 _claude_switcher_home() {
   emulate -L zsh
   print -r -- "${CLAUDE_SWITCHER_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/claude-switcher}"
@@ -227,6 +229,215 @@ _claude_switcher_desktop_binary() {
   whence -p -- claude-desktop
 }
 
+_claude_switcher_desktop_data_dir() {
+  emulate -L zsh
+  local profile=$1
+
+  if [[ "$profile" == default ]]; then
+    print -r -- "${XDG_CONFIG_HOME:-$HOME/.config}/Claude"
+  else
+    print -r -- "$(_claude_switcher_profile_root "$profile")/desktop"
+  fi
+}
+
+_claude_switcher_desktop_running() {
+  emulate -L zsh
+  local lock="$1/SingletonLock"
+  local target
+  local pid
+
+  [[ -L "$lock" ]] || return 1
+  target=$(command readlink -- "$lock") || return 1
+  pid=${target##*-}
+  [[ "$pid" == <-> ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+_claude_switcher_url_profile() {
+  emulate -L zsh
+  local root=$(_claude_switcher_home)
+  local persisted=
+  local profile
+  local -a running
+  local -a named=("$root"/*(N/:t))
+
+  if [[ -r "$root/.active-profile" ]]; then
+    IFS= read -r persisted < "$root/.active-profile"
+  fi
+  if ! _claude_switcher_validate_profile "$persisted" >/dev/null 2>&1 ||
+    ! _claude_switcher_profile_exists "$persisted"; then
+    persisted=default
+  fi
+
+  for profile in default "${(@)named:#default}"; do
+    _claude_switcher_validate_profile "$profile" >/dev/null 2>&1 || continue
+    _claude_switcher_desktop_running "$(_claude_switcher_desktop_data_dir "$profile")" &&
+      running+=("$profile")
+  done
+
+  if (( ${running[(Ie)$persisted]} )); then
+    print -r -- "$persisted"
+  elif (( $#running == 1 )); then
+    print -r -- "$running[1]"
+  else
+    print -r -- "$persisted"
+  fi
+}
+
+_claude_switcher_open_url() {
+  emulate -L zsh
+  local -x CLAUDE_SWITCHER_PROFILE
+
+  CLAUDE_SWITCHER_PROFILE=$(_claude_switcher_url_profile) || return
+  claude-desktop "$@"
+}
+
+_claude_switcher_url_handler_paths() {
+  emulate -L zsh
+  local apps_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+
+  reply=(
+    "$(_claude_switcher_home)/url-handler"
+    "$apps_dir/claude-switcher-url-handler.desktop"
+    "$(_claude_switcher_home)/.url-handler-previous"
+  )
+}
+
+_claude_switcher_desktop_exec_quote() {
+  emulate -L zsh
+  local value=$1
+
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//\`/\\\`}
+  value=${value//\$/\\\$}
+  value=${value//\\/\\\\}
+  value=${value//\%/%%}
+  print -r -- "\"$value\""
+}
+
+_claude_switcher_url_handler_install() {
+  emulate -L zsh
+  local root=$(_claude_switcher_home)
+  local script desktop_file previous_file
+  local zsh_binary
+  local desktop_binary
+  local previous
+  local -a reply
+
+  [[ "$OSTYPE" == linux* ]] || {
+    print -u2 -- "The claude:// URL handler is only supported on Linux."
+    return 1
+  }
+  zsh_binary=$(whence -p -- zsh) || {
+    print -u2 -- "zsh executable not found in PATH."
+    return 127
+  }
+  desktop_binary=$(_claude_switcher_desktop_binary) || {
+    print -u2 -- "Claude Desktop executable not found. Set CLAUDE_DESKTOP_BIN."
+    return 127
+  }
+
+  _claude_switcher_url_handler_paths
+  script=$reply[1]
+  desktop_file=$reply[2]
+  previous_file=$reply[3]
+
+  command mkdir -p -- "$root" "${desktop_file:h}" || return
+  command chmod 700 -- "$root" || return
+
+  print -r -- "#!$zsh_binary -f
+unset CLAUDE_SWITCHER_PROFILE CLAUDE_SWITCHER_DEFAULT_PROFILE CLAUDE_CONFIG_DIR
+export CLAUDE_SWITCHER_HOME=${(qq)root}
+export CLAUDE_DESKTOP_BIN=${(qq)desktop_binary}
+source ${(qq)_CLAUDE_SWITCHER_PLUGIN_FILE} || exit
+_claude_switcher_open_url \"\$@\"" >| "$script" || return
+  command chmod 700 -- "$script" || return
+
+  print -r -- "[Desktop Entry]
+Type=Application
+Name=Claude (claude-switcher)
+Comment=Open claude:// links in the matching claude-switcher profile
+Exec=$(_claude_switcher_desktop_exec_quote "$script") %u
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/claude;" >| "$desktop_file" || return
+
+  if (( $+commands[update-desktop-database] )); then
+    command update-desktop-database -q -- "${desktop_file:h}" 2>/dev/null
+  fi
+
+  (( $+commands[xdg-mime] )) || {
+    print -u2 -- "xdg-mime not found. Set ${desktop_file:t} as the default handler for x-scheme-handler/claude manually."
+    return 1
+  }
+
+  previous=$(command xdg-mime query default x-scheme-handler/claude 2>/dev/null)
+  if [[ -n "$previous" && "$previous" != "${desktop_file:t}" ]]; then
+    print -r -- "$previous" >| "$previous_file" || return
+  fi
+  command xdg-mime default "${desktop_file:t}" x-scheme-handler/claude || return
+  print -r -- "Installed claude:// URL handler '$desktop_file'."
+}
+
+_claude_switcher_url_handler_uninstall() {
+  emulate -L zsh
+  local script desktop_file previous_file
+  local previous=
+  local -a reply
+
+  _claude_switcher_url_handler_paths
+  script=$reply[1]
+  desktop_file=$reply[2]
+  previous_file=$reply[3]
+
+  if [[ -r "$previous_file" ]]; then
+    IFS= read -r previous < "$previous_file"
+  fi
+  if [[ -n "$previous" ]] && (( $+commands[xdg-mime] )); then
+    command xdg-mime default "$previous" x-scheme-handler/claude || return
+  fi
+
+  command rm -f -- "$script" "$desktop_file" "$previous_file" || return
+  if (( $+commands[update-desktop-database] )); then
+    command update-desktop-database -q -- "${desktop_file:h}" 2>/dev/null
+  fi
+  print -r -- "Removed claude:// URL handler${previous:+, restored '$previous'}."
+}
+
+_claude_switcher_url_handler_status() {
+  emulate -L zsh
+  local current=
+  local -a reply
+
+  _claude_switcher_url_handler_paths
+  if (( $+commands[xdg-mime] )); then
+    current=$(command xdg-mime query default x-scheme-handler/claude 2>/dev/null)
+  fi
+
+  if [[ -e "$reply[2]" && "$current" == "${reply[2]:t}" ]]; then
+    print -r -- "installed: claude:// links open in profile '$(_claude_switcher_url_profile)'"
+  elif [[ -e "$reply[2]" ]]; then
+    print -r -- "installed but not the default handler (current: ${current:-unknown})"
+  else
+    print -r -- "not installed (current handler: ${current:-unknown})"
+  fi
+}
+
+_claude_switcher_url_handler() {
+  emulate -L zsh
+
+  case "${1:-status}" in
+    install) _claude_switcher_url_handler_install ;;
+    uninstall) _claude_switcher_url_handler_uninstall ;;
+    status) _claude_switcher_url_handler_status ;;
+    *)
+      print -u2 -- "Usage: claude-profile url-handler [install | uninstall | status]"
+      return 2
+      ;;
+  esac
+}
+
 claude-profile() {
   emulate -L zsh
   local action=${1:-}
@@ -245,6 +456,7 @@ claude-profile() {
   claude-profile use PROFILE
   claude-profile add PROFILE
   claude-profile remove PROFILE [--force]
+  claude-profile url-handler [install | uninstall | status]
   claude-profile --list
   claude-profile --current
 
@@ -269,6 +481,13 @@ See also: claude-profiles --help, claudeon --help, claudeoff --help"
         return 2
       }
       _claude_switcher_set_profile "$2"
+      ;;
+    url-handler)
+      [[ $# -le 2 ]] || {
+        print -u2 -- "Usage: claude-profile url-handler [install | uninstall | status]"
+        return 2
+      }
+      _claude_switcher_url_handler "${@:2}"
       ;;
     *)
       [[ $# == 1 ]] || {
@@ -423,6 +642,7 @@ _claude_switcher_completion() {
     'add:Add a named profile'
     'remove:Remove a named profile'
     'use:Switch profiles'
+    'url-handler:Route claude:// links to the matching profile'
     'list:List profiles'
     'current:Show the active profile'
     'help:Show usage'
@@ -449,6 +669,9 @@ _claude_switcher_completion() {
           ;;
         use)
           _arguments "1:profile:($profiles)"
+          ;;
+        url-handler)
+          _arguments '1:action:(install uninstall status)'
           ;;
         remove)
           _arguments \
